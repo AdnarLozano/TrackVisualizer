@@ -9,18 +9,19 @@ struct ContentView: View {
 
     var body: some View {
         VStack {
-            // Waveform at the top
+            // Waveform at the top with top margin and increased height
             ScrollView(.horizontal) {
                 if isLoadingWaveform {
                     ProgressView("Loading Waveform...")
-                        .frame(height: 75)
+                        .frame(height: 100) // Increased to 100 pixels
                         .frame(width: 200)
                         .background(Color.black.opacity(0.8))
                 } else {
                     WaveformView(data: waveformData)
-                        .frame(height: 75)
+                        .frame(height: 100) // Increased to 100 pixels
                         .frame(width: max(200, CGFloat(waveformData.count) * (2 + 1))) // 2 for bar width, 1 for spacing
                         .background(Color.black.opacity(0.8))
+                        .padding(.top, 25) // Added 10-point top margin
                         .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
                             handleDrop(providers: providers)
                         }
@@ -108,9 +109,9 @@ struct ContentView: View {
             .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
                 handleDrop(providers: providers)
             }
-            // Load waveform when selectedTrack changes
-            .onChange(of: selectedTrack) { newTrack in
-                if let track = newTrack {
+            // Updated onChange with two-parameter closure
+            .onChange(of: selectedTrack) { oldValue, newValue in
+                if let track = newValue {
                     loadWaveform(for: track)
                 } else {
                     waveformData = []
