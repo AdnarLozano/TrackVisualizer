@@ -4,18 +4,27 @@ struct ContentView: View {
     @StateObject private var tracklistManager = TracklistManager()
     @StateObject private var playerManager = PlayerManager()
     @State private var selectedTrack: URL?
+    @State private var waveformData: [Float] = [] // Store waveform data
+    @State private var isLoadingWaveform = false // Track loading state
 
     var body: some View {
         VStack {
             // Waveform at the top
             ScrollView(.horizontal) {
-                WaveformView(data: PreviewContent.sampleWaveformData)
-                    .frame(height: 75)
-                    .frame(width: 200)
-                    .background(Color.black.opacity(0.8))
-                    .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
-                        handleDrop(providers: providers)
-                    }
+                if isLoadingWaveform {
+                    ProgressView("Loading Waveform...")
+                        .frame(height: 75)
+                        .frame(width: 200)
+                        .background(Color.black.opacity(0.8))
+                } else {
+                    WaveformView(data: waveformData)
+                        .frame(height: 75)
+                        .frame(width: max(200, CGFloat(waveformData.count) * (2 + 1))) // 2 for bar width, 1 for spacing
+                        .background(Color.black.opacity(0.8))
+                        .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
+                            handleDrop(providers: providers)
+                        }
+                }
             }
             .padding(.horizontal)
 
@@ -84,6 +93,7 @@ struct ContentView: View {
                             selectedTrack = track
                             startAccessingSecurityScopedResource(for: track) {
                                 playerManager.togglePlayPause(url: track)
+                                loadWaveform(for: track)
                             }
                         }
                         .contextMenu {
@@ -98,6 +108,14 @@ struct ContentView: View {
             .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
                 handleDrop(providers: providers)
             }
+            // Load waveform when selectedTrack changes
+            .onChange(of: selectedTrack) { newTrack in
+                if let track = newTrack {
+                    loadWaveform(for: track)
+                } else {
+                    waveformData = []
+                }
+            }
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
@@ -108,6 +126,7 @@ struct ContentView: View {
         if let selectedTrack = selectedTrack, !tracklistManager.tracks.contains(selectedTrack) {
             self.selectedTrack = nil
             playerManager.stop()
+            waveformData = []
         }
     }
 
@@ -159,6 +178,25 @@ struct ContentView: View {
         }
         completion()
         url.stopAccessingSecurityScopedResource()
+    }
+
+    private func loadWaveform(for url: URL) {
+        isLoadingWaveform = true
+        Task {
+            do {
+                let data = try await AudioProcessor.extractWaveformData(from: url)
+                DispatchQueue.main.async {
+                    self.waveformData = data
+                    self.isLoadingWaveform = false
+                }
+            } catch {
+                print("Failed to load waveform: \(error)")
+                DispatchQueue.main.async {
+                    self.waveformData = []
+                    self.isLoadingWaveform = false
+                }
+            }
+        }
     }
 }
 

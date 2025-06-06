@@ -1,6 +1,5 @@
 import Foundation
 import AVFoundation
-import Accelerate
 
 class AudioProcessor {
     // Extracts amplitude samples from an audio file for waveform display
@@ -11,8 +10,8 @@ class AudioProcessor {
         }
         defer { url.stopAccessingSecurityScopedResource() }
 
-        // Load the audio file
-        let asset = AVAsset(url: url)
+        // Load the audio file using AVURLAsset (fix for macOS 15.0 deprecation)
+        let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
             throw AudioProcessingError.noAudioTrackFound
         }
@@ -46,6 +45,8 @@ class AudioProcessor {
         let samplesPerBin = max(1, totalSamples / sampleCount)
 
         // Read audio samples
+        var binSum: Float = 0 // Declare outside loop
+        var binCount = 0 // Declare outside loop
         while reader.status == .reading {
             guard let sampleBuffer = readerOutput.copyNextSampleBuffer() else { continue }
             guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { continue }
@@ -55,8 +56,6 @@ class AudioProcessor {
             CMBlockBufferCopyDataBytes(blockBuffer, atOffset: 0, dataLength: bufferLength * MemoryLayout<Int16>.size, destination: &bufferData)
 
             // Process samples in bins
-            var binSum: Float = 0
-            var binCount = 0
             for i in 0..<bufferLength {
                 let sample = Float(bufferData[i]) / 32768.0 // Normalize to [-1, 1]
                 binSum += abs(sample)
