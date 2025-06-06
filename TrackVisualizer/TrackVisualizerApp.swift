@@ -2,7 +2,7 @@
 //  TrackVisualizerApp.swift
 //  TrackVisualizer
 //
-//  Created by hostname on 6/5/25.
+//  Created by Admar Lozano on 6/5/25.
 //
 
 import SwiftUI
