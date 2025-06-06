@@ -10,8 +10,8 @@ struct ContentView: View {
             // Waveform at the top
             ScrollView(.horizontal) {
                 WaveformView(data: PreviewContent.sampleWaveformData)
-                    .frame(height: 75) // Set to 50-100 pixels, chose 75 as a middle ground
-                    .frame(width: 200) // Match tracklist width initially, will adjust with layout
+                    .frame(height: 75)
+                    .frame(width: 200)
                     .background(Color.black.opacity(0.8))
                     .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
                         handleDrop(providers: providers)
@@ -26,10 +26,20 @@ struct ContentView: View {
                 }
                 .padding()
 
-                HStack(spacing: 10) { // Container for playback buttons
+                Button("Delete Selected Track") {
+                    if let selectedTrack = selectedTrack, let index = tracklistManager.tracks.firstIndex(of: selectedTrack) {
+                        deleteTracks(at: IndexSet(integer: index))
+                    }
+                }
+                .padding()
+                .disabled(selectedTrack == nil)
+
+                HStack(spacing: 10) {
                     Button(action: {
                         if let selectedTrack = selectedTrack {
-                            playerManager.togglePlayPause(url: selectedTrack)
+                            startAccessingSecurityScopedResource(for: selectedTrack) {
+                                playerManager.togglePlayPause(url: selectedTrack)
+                            }
                         }
                     }) {
                         Image(systemName: playerManager.isPlaying ? "pause.fill" : "play.fill")
@@ -66,18 +76,25 @@ struct ContentView: View {
 
             // Tracklist
             List(selection: $selectedTrack) {
-                ForEach(tracklistManager.tracks, id: \.self) { track in
+                ForEach(tracklistManager.tracks.indices, id: \.self) { index in
+                    let track = tracklistManager.tracks[index]
                     Text(track.lastPathComponent)
                         .tag(track)
                         .onTapGesture(count: 2) {
                             selectedTrack = track
-                            if let selectedTrack = selectedTrack {
-                                playerManager.togglePlayPause(url: selectedTrack)
+                            startAccessingSecurityScopedResource(for: track) {
+                                playerManager.togglePlayPause(url: track)
+                            }
+                        }
+                        .contextMenu {
+                            Button("Delete") {
+                                deleteTracks(at: IndexSet(integer: index))
                             }
                         }
                 }
+                .onDelete(perform: deleteTracks)
             }
-            .frame(minWidth: 200) // Ensure tracklist has a minimum width
+            .frame(minWidth: 200)
             .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
                 handleDrop(providers: providers)
             }
@@ -86,14 +103,30 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
     }
 
+    private func deleteTracks(at offsets: IndexSet) {
+        tracklistManager.tracks.remove(atOffsets: offsets)
+        if let selectedTrack = selectedTrack, !tracklistManager.tracks.contains(selectedTrack) {
+            self.selectedTrack = nil
+            playerManager.stop()
+        }
+    }
+
     private func importTracks() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.mp3, .wav]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        panel.directoryURL = URL(fileURLWithPath: "/Users/me/Music Production Library")
+        panel.directoryURL = URL(fileURLWithPath: "/Users/hostname/Desktop/Songs")
         if panel.runModal() == .OK {
-            tracklistManager.tracks.append(contentsOf: panel.urls)
+            let newTracks = panel.urls.filter { !tracklistManager.tracks.contains($0) }
+            for url in newTracks {
+                guard url.startAccessingSecurityScopedResource() else {
+                    print("Failed to access security-scoped resource for \(url)")
+                    continue
+                }
+                tracklistManager.tracks.append(url)
+                url.stopAccessingSecurityScopedResource()
+            }
         }
     }
 
@@ -103,13 +136,29 @@ struct ContentView: View {
                 _ = provider.loadObject(ofClass: URL.self) { url, error in
                     if let url = url, (url.pathExtension.lowercased() == "mp3" || url.pathExtension.lowercased() == "wav") {
                         DispatchQueue.main.async {
-                            tracklistManager.tracks.append(url)
+                            if !tracklistManager.tracks.contains(url) {
+                                guard url.startAccessingSecurityScopedResource() else {
+                                    print("Failed to access security-scoped resource for \(url) via drag-and-drop")
+                                    return
+                                }
+                                tracklistManager.tracks.append(url)
+                                url.stopAccessingSecurityScopedResource()
+                            }
                         }
                     }
                 }
             }
         }
         return true
+    }
+
+    private func startAccessingSecurityScopedResource(for url: URL, completion: @escaping () -> Void) {
+        guard url.startAccessingSecurityScopedResource() else {
+            print("Failed to start accessing security-scoped resource for \(url)")
+            return
+        }
+        completion()
+        url.stopAccessingSecurityScopedResource()
     }
 }
 
