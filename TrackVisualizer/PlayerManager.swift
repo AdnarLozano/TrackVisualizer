@@ -4,11 +4,14 @@ import Combine
 
 class PlayerManager: ObservableObject {
     @Published var isPlaying = false
+    @Published var currentTime: Double = 0.0 // Current playback time in seconds
+    @Published var duration: Double = 0.0 // Total duration of the track in seconds
     private var player: AVPlayer?
     private var currentURL: URL?
     private var cancellables = Set<AnyCancellable>()
     private var lastPlayTime: Date?
     private var isAudioReady = false
+    private var timeObserver: Any?
 
     var audioReady: Bool {
         return isAudioReady
@@ -24,6 +27,24 @@ class PlayerManager: ObservableObject {
             let playerItem = AVPlayerItem(url: url)
             player = AVPlayer(playerItem: playerItem)
             currentURL = url
+
+            // Set up duration
+            playerItem.publisher(for: \.status)
+                .sink { [weak self] status in
+                    if status == .readyToPlay, let duration = self?.player?.currentItem?.duration.seconds {
+                        self?.duration = duration.isFinite ? duration : 0.0
+                        print("Duration set to: \(self?.duration ?? 0.0)")
+                    }
+                }
+                .store(in: &cancellables)
+
+            // Set up periodic time observer
+            let interval = CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+            timeObserver = player?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+                let seconds = time.seconds
+                self?.currentTime = seconds.isFinite ? seconds : 0.0
+            }
+
             // Observe status with delay for readiness
             player?.currentItem?.publisher(for: \.status)
                 .sink { [weak self] status in
@@ -77,6 +98,7 @@ class PlayerManager: ObservableObject {
 
     @objc private func playerDidFinishPlaying() {
         isPlaying = false
+        currentTime = 0.0
         print("Playback finished")
     }
 
@@ -92,6 +114,7 @@ class PlayerManager: ObservableObject {
         player?.pause()
         player?.seek(to: .zero)
         isPlaying = false
+        currentTime = 0.0
         print("Playback stopped: \(isPlaying), rate: \(player?.rate ?? -1)")
     }
 
@@ -101,6 +124,12 @@ class PlayerManager: ObservableObject {
             pause()
         } else {
             play(url: url)
+        }
+    }
+
+    deinit {
+        if let observer = timeObserver {
+            player?.removeTimeObserver(observer)
         }
     }
 }

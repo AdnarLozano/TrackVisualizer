@@ -13,15 +13,15 @@ struct ContentView: View {
             ScrollView(.horizontal) {
                 if isLoadingWaveform {
                     ProgressView("Loading Waveform...")
-                        .frame(height: 100) // Increased to 100 pixels
+                        .frame(height: 100)
                         .frame(width: 200)
                         .background(Color.black.opacity(0.8))
                 } else {
-                    WaveformView(data: waveformData)
-                        .frame(height: 100) // Increased to 100 pixels
+                    WaveformView(data: waveformData, currentPosition: playerManager.currentTime, duration: playerManager.duration)
+                        .frame(height: 100)
                         .frame(width: max(200, CGFloat(waveformData.count) * (2 + 1))) // 2 for bar width, 1 for spacing
                         .background(Color.black.opacity(0.8))
-                        .padding(.top, 25) // Added 10-point top margin
+                        .padding(.top, 10)
                         .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
                             handleDrop(providers: providers)
                         }
@@ -109,7 +109,6 @@ struct ContentView: View {
             .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
                 handleDrop(providers: providers)
             }
-            // Updated onChange with two-parameter closure
             .onChange(of: selectedTrack) { oldValue, newValue in
                 if let track = newValue {
                     loadWaveform(for: track)
