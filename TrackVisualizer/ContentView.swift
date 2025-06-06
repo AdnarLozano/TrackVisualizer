@@ -2,48 +2,84 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var tracklistManager = TracklistManager()
+    @StateObject private var playerManager = PlayerManager()
     @State private var selectedTrack: URL?
 
     var body: some View {
-        HStack {
-            // Waveform and Controls
-            VStack {
-                // Waveform
-                ScrollView(.horizontal) {
-                    WaveformView()
-                        .frame(height: 200)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.black.opacity(0.8))
-                        .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
-                            handleDrop(providers: providers)
-                        }
-                }
-                .padding()
-
-                // Playback Controls
-                HStack {
-                    Button(action: { /* Play */ }) { Image(systemName: "play.fill") }
-                    Button(action: { /* Stop */ }) { Image(systemName: "stop.fill") }
-                    Button(action: { /* Rewind */ }) { Image(systemName: "backward.fill") }
-                    Button(action: { /* Forward */ }) { Image(systemName: "forward.fill") }
-                }
-                .padding()
+        VStack {
+            // Waveform at the top
+            ScrollView(.horizontal) {
+                WaveformView(data: PreviewContent.sampleWaveformData)
+                    .frame(height: 75) // Set to 50-100 pixels, chose 75 as a middle ground
+                    .frame(width: 200) // Match tracklist width initially, will adjust with layout
+                    .background(Color.black.opacity(0.8))
+                    .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
+                        handleDrop(providers: providers)
+                    }
             }
+            .padding(.horizontal)
 
-            // Tracklist
-            VStack {
+            // Button Container (Import Tracks and Playback Controls)
+            HStack {
                 Button("Import Tracks") {
                     importTracks()
                 }
                 .padding()
 
-                List(tracklistManager.tracks, id: \.self, selection: $selectedTrack) { track in
+                HStack(spacing: 10) { // Container for playback buttons
+                    Button(action: {
+                        if let selectedTrack = selectedTrack {
+                            playerManager.togglePlayPause(url: selectedTrack)
+                        }
+                    }) {
+                        Image(systemName: playerManager.isPlaying ? "pause.fill" : "play.fill")
+                    }
+                    .disabled(selectedTrack == nil)
+
+                    Button(action: {
+                        playerManager.stop()
+                    }) {
+                        Image(systemName: "stop.fill")
+                    }
+                    .disabled(!playerManager.isPlaying)
+
+                    Button(action: {
+                        // Rewind logic (to be implemented)
+                    }) {
+                        Image(systemName: "backward.fill")
+                    }
+                    .disabled(true) // Placeholder
+
+                    Button(action: {
+                        // Forward logic (to be implemented)
+                    }) {
+                        Image(systemName: "forward.fill")
+                    }
+                    .disabled(true) // Placeholder
+                }
+                .padding(.vertical, 5)
+                .padding(.horizontal, 10)
+                .background(Color.gray.opacity(0.2))
+                .cornerRadius(8)
+            }
+            .padding(.bottom)
+
+            // Tracklist
+            List(selection: $selectedTrack) {
+                ForEach(tracklistManager.tracks, id: \.self) { track in
                     Text(track.lastPathComponent)
+                        .tag(track)
+                        .onTapGesture(count: 2) {
+                            selectedTrack = track
+                            if let selectedTrack = selectedTrack {
+                                playerManager.togglePlayPause(url: selectedTrack)
+                            }
+                        }
                 }
-                .frame(minWidth: 200)
-                .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
-                    handleDrop(providers: providers)
-                }
+            }
+            .frame(minWidth: 200) // Ensure tracklist has a minimum width
+            .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
+                handleDrop(providers: providers)
             }
         }
         .background(Color.black)
