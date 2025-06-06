@@ -1,0 +1,4 @@
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+build/
+*.DS_Store
