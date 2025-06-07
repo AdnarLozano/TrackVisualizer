@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var waveformData: [Float] = [] // Store waveform data
     @State private var isLoadingWaveform = false // Track loading state
     @State private var progress: Double = 0.0 // Progress for the slider
+    @State private var isAnalyzing = false // Track analysis state
 
     var body: some View {
         VStack {
@@ -15,11 +16,11 @@ struct ContentView: View {
             VStack {
                 WaveformView(data: waveformData, currentPosition: progress, duration: playerManager.duration)
                     .frame(height: 100) // Waveform height
-
+                
                 // Progress Bar
                 Slider(value: $progress, in: 0...max(playerManager.duration, 1), step: 0.1)
                     .accentColor(.green)
-                    .disabled(playerManager.duration == 0)
+                    .disabled(playerManager.duration == 0 || isAnalyzing)
                     .onChange(of: progress) { oldValue, newValue in
                         playerManager.currentTime = newValue // Update playback position
                     }
@@ -27,19 +28,33 @@ struct ContentView: View {
                         progress = newValue // Sync slider with playback
                     }
                     .padding(.horizontal)
-
-                // Playback Buttons
+                
+                // Buttons container
                 HStack {
+                    Button("Import") {
+                        importTracks()
+                    }
+                    .padding()
+
+                    Button("Delete") {
+                        if let selectedTrack = selectedTrack, let index = tracklistManager.tracks.firstIndex(of: selectedTrack) {
+                            deleteTracks(at: IndexSet(integer: index))
+                        }
+                    }
+                    
+                    Spacer()    // Push buttons to the left and play controls to the center
+                    
                     Button(action: {
                         if playerManager.isPlaying {
                             playerManager.pause()
-                        } else if let track = selectedTrack {
+                        } else if let track = selectedTrack, !isAnalyzing {
                             playerManager.play(url: track)
                         }
                     }) {
                         Image(systemName: playerManager.isPlaying ? "pause.fill" : "play.fill")
                     }
                     .padding(.horizontal)
+                    .disabled(isAnalyzing)
 
                     Button(action: {
                         playerManager.stop()
@@ -47,25 +62,13 @@ struct ContentView: View {
                         Image(systemName: "stop.fill")
                     }
                     .padding(.horizontal)
+                    .disabled(isAnalyzing)
+
+                    Spacer()    // Push play controls to the center
                 }
                 .padding(.vertical)
-
-                HStack {
-                    Button("Import Tracks") {
-                        importTracks()
-                    }
-                    .padding()
-                    Button("Delete Selected Track") {
-                        if let selectedTrack = selectedTrack, let index = tracklistManager.tracks.firstIndex(of: selectedTrack) {
-                            deleteTracks(at: IndexSet(integer: index))
-                        }
-                    }
-                    .padding()
-                    .disabled(selectedTrack == nil)
-                }
-                .padding(.bottom)
             }
-            .frame(height: 240) // Adjusted height to accommodate progress bar and buttons
+            .frame(height: 200) // Fixed total height for waveform and buttons
 
             // Tracklist (flexible height)
             List(selection: $selectedTrack) {
@@ -99,7 +102,7 @@ struct ContentView: View {
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
-        .frame(minWidth: 600, idealWidth: 1200, maxWidth: .infinity, minHeight: 240, idealHeight: 370) // Updated minHeight and idealHeight
+        .frame(minWidth: 600, idealWidth: 1200, maxWidth: .infinity, minHeight: 210, idealHeight: 370) // Adjusted minHeight and idealHeight
     }
 
     private func deleteTracks(at offsets: IndexSet) {
@@ -162,6 +165,7 @@ struct ContentView: View {
 
     private func loadWaveform(for url: URL) {
         isLoadingWaveform = true
+        isAnalyzing = true // Start analyzing
         Task {
             do {
                 // Load duration from the audio file
@@ -172,20 +176,20 @@ struct ContentView: View {
                 // Update PlayerManager duration
                 DispatchQueue.main.async {
                     self.playerManager.duration = durationSeconds.isFinite ? durationSeconds : 0.0
-                    self.playerManager.play(url: url) // Start playback with URL
-                    self.progress = 0.0 // Reset progress to start
                 }
                 
                 let data = try await AudioProcessor.extractWaveformData(from: url)
                 DispatchQueue.main.async {
                     self.waveformData = data
                     self.isLoadingWaveform = false
+                    self.isAnalyzing = false // Analysis complete
                 }
             } catch {
                 print("Failed to load waveform: \(error)")
                 DispatchQueue.main.async {
                     self.waveformData = []
                     self.isLoadingWaveform = false
+                    self.isAnalyzing = false // Analysis failed
                 }
             }
         }
