@@ -9,127 +9,138 @@ class PlayerManager: ObservableObject {
     private var player: AVPlayer?
     private var currentURL: URL?
     private var cancellables = Set<AnyCancellable>()
-    private var lastPlayTime: Date?
-    private var isAudioReady = false
     private var timeObserver: Any?
+    private let timeObservationInterval: Double = 0.05 // Configurable interval
 
-    var audioReady: Bool {
-        return isAudioReady
-    }
-
+    // MARK: - Public Methods
     func play(url: URL) {
-        guard lastPlayTime == nil || Date().timeIntervalSince(lastPlayTime!) > 1.0 else {
-            print("Playback throttled to avoid rate-limit")
-            return
-        }
-        if currentURL != url || player == nil {
-            print("Creating new player for URL: \(url.absoluteString)")
-            let playerItem = AVPlayerItem(url: url)
-            player = AVPlayer(playerItem: playerItem)
-            currentURL = url
-
-            // Set up duration
-            playerItem.publisher(for: \.status)
-                .sink { [weak self] status in
-                    if status == .readyToPlay, let duration = self?.player?.currentItem?.duration.seconds {
-                        self?.duration = duration.isFinite ? duration : 0.0
-                        print("Duration set to: \(self?.duration ?? 0.0)")
-                    }
-                }
-                .store(in: &cancellables)
-
-            // Set up periodic time observer
-            let interval = CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-            timeObserver = player?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-                let seconds = time.seconds
-                self?.currentTime = seconds.isFinite ? seconds : 0.0
-            }
-
-            // Observe status with delay for readiness
-            player?.currentItem?.publisher(for: \.status)
-                .sink { [weak self] status in
-                    if let self = self {
-                        print("Player status changed to: \(status.rawValue)")
-                        if status == .readyToPlay {
-                            self.isAudioReady = true
-                            DispatchQueue.main.async {
-                                self.player?.play()
-                                self.isPlaying = true
-                                print("Playback resumed after ready state")
-                            }
-                        } else if status == .unknown {
-                            print("Status unknown, waiting for readiness")
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                                if let self = self, !self.isAudioReady {
-                                    print("Still not ready, resetting player. Error: \(self.player?.currentItem?.error?.localizedDescription ?? "None")")
-                                    self.player = nil
-                                    self.isPlaying = false
-                                }
-                            }
-                        } else if status == .failed {
-                            print("Playback failed: \(self.player?.currentItem?.error?.localizedDescription ?? "Unknown error")")
-                            self.player = nil
-                            self.isPlaying = false
-                        }
-                    }
-                }
-                .store(in: &cancellables)
-            // Observe rate
-            player?.publisher(for: \.rate)
-                .sink { [weak self] rate in
-                    print("Player rate changed to: \(rate)")
-                    if let self = self, rate == 0, self.isPlaying, self.player?.currentItem?.status != .readyToPlay {
-                        print("Playback stopped unexpectedly, resetting")
-                        self.isPlaying = false
-                    }
-                }
-                .store(in: &cancellables)
-            NotificationCenter.default.addObserver(self, selector: #selector(playerDidFinishPlaying), name: .AVPlayerItemDidPlayToEndTime, object: playerItem)
-        }
-        // Always attempt to play if the player exists
-        if player != nil {
-            print("Resuming playback for existing player")
+        guard currentURL != url || player == nil else {
             player?.play()
             isPlaying = true
+            return
         }
-        lastPlayTime = Date()
-        print("Playback started: \(isPlaying), audio ready: \(isAudioReady), rate: \(player?.rate ?? -1)")
-    }
 
-    @objc private func playerDidFinishPlaying() {
-        isPlaying = false
-        currentTime = 0.0
-        print("Playback finished")
+        let playerItem = AVPlayerItem(url: url)
+        player = AVPlayer(playerItem: playerItem)
+        currentURL = url
+
+        // Single observer for status and duration
+        playerItem.publisher(for: \.status)
+            .sink { [weak self] status in
+                guard let self = self else { return }
+                switch status {
+                case .readyToPlay:
+                    if let duration = self.player?.currentItem?.duration.seconds {
+                        self.duration = duration.isFinite ? duration : 0.0
+                        print("Duration set to: \(self.duration)")
+                    }
+                    self.isAudioReady = true
+                    self.player?.play()
+                    self.isPlaying = true
+                    print("Playback started")
+                case .unknown:
+                    print("Status unknown, awaiting readiness")
+                case .failed:
+                    print("Playback failed: \(self.player?.currentItem?.error?.localizedDescription ?? "Unknown error")")
+                    self.resetPlayer()
+                @unknown default:
+                    print("Unknown player status")
+                }
+            }
+            .store(in: &cancellables)
+
+        // Periodic time observer
+        let interval = CMTime(seconds: timeObservationInterval, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserver = player?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            guard let self = self, let player = self.player else { return }
+            let seconds = time.seconds
+            self.currentTime = seconds.isFinite ? seconds : 0.0
+            // Sync isPlaying with rate if not buffering
+            if player.rate == 0 && self.isPlaying && player.currentItem?.status == .readyToPlay {
+                self.isPlaying = false
+                print("Playback stopped unexpectedly")
+            }
+        }
+
+        // Handle playback end
+        NotificationCenter.default.addObserver(self, selector: #selector(playerDidFinishPlaying), name: .AVPlayerItemDidPlayToEndTime, object: playerItem)
     }
 
     func pause() {
-        print("Pausing playback")
         player?.pause()
         isPlaying = false
-        print("Playback paused: \(isPlaying), rate: \(player?.rate ?? -1)")
+        print("Playback paused")
     }
 
     func stop() {
-        print("Stopping playback")
         player?.pause()
         player?.seek(to: .zero)
-        isPlaying = false
         currentTime = 0.0
-        print("Playback stopped: \(isPlaying), rate: \(player?.rate ?? -1)")
+        isPlaying = false
+        print("Playback stopped")
     }
 
-    func togglePlayPause(url: URL) {
-        print("Toggling playback for URL: \(url.absoluteString)")
-        if isPlaying {
-            pause()
-        } else {
-            play(url: url)
+    func seek(to time: Double) {
+        guard let player = player, let duration = player.currentItem?.duration.seconds, duration > 0 else { return }
+        let seekTime = CMTime(seconds: min(max(time, 0), duration), preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        player.seek(to: seekTime) { [weak self] _ in
+            self?.currentTime = time
+            print("Seeked to: \(time) seconds")
         }
+    }
+
+    // MARK: - Private Helpers
+    private var isAudioReady = false {
+        didSet {
+            print("Audio ready state changed to: \(isAudioReady)")
+        }
+    }
+
+    private func resetPlayer() {
+        player?.pause()
+        player = nil
+        isPlaying = false
+        currentTime = 0.0
+        duration = 0.0
+    }
+
+    @objc private func playerDidFinishPlaying() {
+        stop()
+        print("Playback finished")
     }
 
     deinit {
         if let observer = timeObserver {
             player?.removeTimeObserver(observer)
         }
+        NotificationCenter.default.removeObserver(self)
     }
 }
+
+//import Foundation
+//import AVFoundation
+//import Combine
+//
+//class PlayerManager: ObservableObject {
+//    @Published var currentTime: Double = 0.0 // Static for now, will be controlled manually later
+//    @Published var duration: Double = 0.0 // Static for now
+//    private var cancellables = Set<AnyCancellable>()
+//
+//    // Placeholder methods (no playback)
+//    func play(url: URL) {
+//        print("Playback bypassed for now")
+//    }
+//
+//    func pause() {
+//        print("Pause bypassed for now")
+//    }
+//
+//    func stop() {
+//        print("Stop bypassed for now")
+//        currentTime = 0.0
+//    }
+//
+//    func togglePlayPause(url: URL) {
+//        print("Toggle playback bypassed for now")
+//    }
+//}

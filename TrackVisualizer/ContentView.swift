@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct ContentView: View {
     @StateObject private var tracklistManager = TracklistManager()
@@ -6,85 +7,67 @@ struct ContentView: View {
     @State private var selectedTrack: URL?
     @State private var waveformData: [Float] = [] // Store waveform data
     @State private var isLoadingWaveform = false // Track loading state
+    @State private var progress: Double = 0.0 // Progress for the slider
 
     var body: some View {
         VStack {
-            // Waveform at the top with top margin and increased height
-            ScrollView(.horizontal) {
-                if isLoadingWaveform {
-                    ProgressView("Loading Waveform...")
-                        .frame(height: 100)
-                        .frame(width: 200)
-                        .background(Color.black.opacity(0.8))
-                } else {
-                    WaveformView(data: waveformData, currentPosition: playerManager.currentTime, duration: playerManager.duration)
-                        .frame(height: 100)
-                        .frame(width: max(200, CGFloat(waveformData.count) * (2 + 1))) // 2 for bar width, 1 for spacing
-                        .background(Color.black.opacity(0.8))
-                        .padding(.top, 10)
-                        .onDrop(of: ["public.file-url"], isTargeted: nil) { providers in
-                            handleDrop(providers: providers)
-                        }
-                }
-            }
-            .padding(.horizontal)
+            // Waveform and Button section with fixed height
+            VStack {
+                WaveformView(data: waveformData, currentPosition: progress, duration: playerManager.duration)
+                    .frame(height: 100) // Waveform height
 
-            // Button Container (Import Tracks and Playback Controls)
-            HStack {
-                Button("Import Tracks") {
-                    importTracks()
-                }
-                .padding()
-
-                Button("Delete Selected Track") {
-                    if let selectedTrack = selectedTrack, let index = tracklistManager.tracks.firstIndex(of: selectedTrack) {
-                        deleteTracks(at: IndexSet(integer: index))
+                // Progress Bar
+                Slider(value: $progress, in: 0...max(playerManager.duration, 1), step: 0.1)
+                    .accentColor(.green)
+                    .disabled(playerManager.duration == 0)
+                    .onChange(of: progress) { oldValue, newValue in
+                        playerManager.currentTime = newValue // Update playback position
                     }
-                }
-                .padding()
-                .disabled(selectedTrack == nil)
+                    .onChange(of: playerManager.currentTime) { oldValue, newValue in
+                        progress = newValue // Sync slider with playback
+                    }
+                    .padding(.horizontal)
 
-                HStack(spacing: 10) {
+                // Playback Buttons
+                HStack {
                     Button(action: {
-                        if let selectedTrack = selectedTrack {
-                            startAccessingSecurityScopedResource(for: selectedTrack) {
-                                playerManager.togglePlayPause(url: selectedTrack)
-                            }
+                        if playerManager.isPlaying {
+                            playerManager.pause()
+                        } else if let track = selectedTrack {
+                            playerManager.play(url: track)
                         }
                     }) {
                         Image(systemName: playerManager.isPlaying ? "pause.fill" : "play.fill")
                     }
-                    .disabled(selectedTrack == nil)
+                    .padding(.horizontal)
 
                     Button(action: {
                         playerManager.stop()
                     }) {
                         Image(systemName: "stop.fill")
                     }
-                    .disabled(!playerManager.isPlaying)
-
-                    Button(action: {
-                        // Rewind logic (to be implemented)
-                    }) {
-                        Image(systemName: "backward.fill")
-                    }
-                    .disabled(true) // Placeholder
-
-                    Button(action: {
-                        // Forward logic (to be implemented)
-                    }) {
-                        Image(systemName: "forward.fill")
-                    }
-                    .disabled(true) // Placeholder
+                    .padding(.horizontal)
                 }
-                .padding(.vertical, 5)
-                .padding(.horizontal, 10)
-                .background(Color.gray.opacity(0.2))
-                .cornerRadius(8)
-            }
-            .padding(.bottom)
+                .padding(.vertical)
 
-            // Tracklist
+                HStack {
+                    Button("Import Tracks") {
+                        importTracks()
+                    }
+                    .padding()
+                    Button("Delete Selected Track") {
+                        if let selectedTrack = selectedTrack, let index = tracklistManager.tracks.firstIndex(of: selectedTrack) {
+                            deleteTracks(at: IndexSet(integer: index))
+                        }
+                    }
+                    .padding()
+                    .disabled(selectedTrack == nil)
+                }
+                .padding(.bottom)
+            }
+            .frame(height: 240) // Adjusted height to accommodate progress bar and buttons
+
+            // Tracklist (flexible height)
             List(selection: $selectedTrack) {
                 ForEach(tracklistManager.tracks.indices, id: \.self) { index in
                     let track = tracklistManager.tracks[index]
@@ -92,10 +75,7 @@ struct ContentView: View {
                         .tag(track)
                         .onTapGesture(count: 2) {
                             selectedTrack = track
-                            startAccessingSecurityScopedResource(for: track) {
-                                playerManager.togglePlayPause(url: track)
-                                loadWaveform(for: track)
-                            }
+                            loadWaveform(for: track)
                         }
                         .contextMenu {
                             Button("Delete") {
@@ -119,13 +99,13 @@ struct ContentView: View {
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
+        .frame(minWidth: 600, idealWidth: 1200, maxWidth: .infinity, minHeight: 240, idealHeight: 370) // Updated minHeight and idealHeight
     }
 
     private func deleteTracks(at offsets: IndexSet) {
         tracklistManager.tracks.remove(atOffsets: offsets)
         if let selectedTrack = selectedTrack, !tracklistManager.tracks.contains(selectedTrack) {
             self.selectedTrack = nil
-            playerManager.stop()
             waveformData = []
         }
     }
@@ -184,6 +164,18 @@ struct ContentView: View {
         isLoadingWaveform = true
         Task {
             do {
+                // Load duration from the audio file
+                let asset = AVURLAsset(url: url)
+                let duration = try await asset.load(.duration)
+                let durationSeconds = CMTimeGetSeconds(duration)
+                
+                // Update PlayerManager duration
+                DispatchQueue.main.async {
+                    self.playerManager.duration = durationSeconds.isFinite ? durationSeconds : 0.0
+                    self.playerManager.play(url: url) // Start playback with URL
+                    self.progress = 0.0 // Reset progress to start
+                }
+                
                 let data = try await AudioProcessor.extractWaveformData(from: url)
                 DispatchQueue.main.async {
                     self.waveformData = data
